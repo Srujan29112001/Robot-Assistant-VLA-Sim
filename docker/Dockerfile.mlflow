@@ -1,0 +1,22 @@
+FROM python:3.10-slim
+
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /mlflow
+
+RUN pip install --no-cache-dir \
+    mlflow[extras]==2.9.2 \
+    psycopg2-binary \
+    boto3
+
+EXPOSE 5000
+
+CMD mlflow server \
+    --backend-store-uri ${BACKEND_STORE_URI} \
+    --default-artifact-root ${DEFAULT_ARTIFACT_ROOT} \
+    --host 0.0.0.0 \
+    --port 5000

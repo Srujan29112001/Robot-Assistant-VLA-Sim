@@ -1,0 +1,340 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # Core Services
+  # ============================================
+
+  # FastAPI Backend with MCP Server
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: vla_api
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - POSTGRES_HOST=postgres
+      - REDIS_HOST=redis
+      - NEO4J_URI=bolt://neo4j:7687
+      - MONGODB_URI=mongodb://mongodb:27017
+    volumes:
+      - ./api:/app/api
+      - ./config:/app/config
+      - model-cache:/root/.cache/huggingface
+    networks:
+      - vla-network
+    depends_on:
+      - postgres
+      - redis
+      - neo4j
+      - mongodb
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # Perception Service
+  perception:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.perception
+    container_name: vla_perception
+    environment:
+      - ROS_DOMAIN_ID=42
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    volumes:
+      - ./perception:/app/perception
+      - ./models:/app/models
+      - model-cache:/root/.cache/huggingface
+    networks:
+      - vla-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # LLM Agent Service
+  agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: vla_agent
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - MCP_SERVER_URL=http://api:8000/mcp
+    volumes:
+      - ./cognition:/app/cognition
+      - ./memory:/app/memory
+      - model-cache:/root/.cache/huggingface
+    networks:
+      - vla-network
+    depends_on:
+      - api
+      - neo4j
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # ============================================
+  # ROS2 Services
+  # ============================================
+
+  # ROS2 Core with Navigation Stack
+  ros2-core:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ros2
+    container_name: vla_ros2_core
+    environment:
+      - ROS_DOMAIN_ID=42
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    volumes:
+      - ./ros2_ws:/ros2_ws
+      - /dev:/dev
+    networks:
+      - vla-network
+    privileged: true
+    restart: unless-stopped
+    profiles:
+      - hardware
+
+  # ============================================
+  # Simulation Services
+  # ============================================
+
+  # Gazebo Simulation
+  gazebo:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gazebo
+    container_name: vla_gazebo
+    environment:
+      - DISPLAY=${DISPLAY}
+      - ROS_DOMAIN_ID=42
+      - GAZEBO_MODEL_PATH=/gazebo/models
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./simulation/gazebo:/gazebo
+      - ./ros2_ws:/ros2_ws
+    networks:
+      - vla-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    profiles:
+      - simulation
+    restart: unless-stopped
+
+  # ============================================
+  # Database Services
+  # ============================================
+
+  # PostgreSQL for structured data
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: vla_postgres
+    environment:
+      - POSTGRES_USER=robot
+      - POSTGRES_PASSWORD=robot_pass
+      - POSTGRES_DB=robot_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - vla-network
+    restart: unless-stopped
+
+  # Neo4j for Knowledge Graph
+  neo4j:
+    image: neo4j:5.14
+    container_name: vla_neo4j
+    environment:
+      - NEO4J_AUTH=neo4j/robotpassword
+      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    networks:
+      - vla-network
+    restart: unless-stopped
+
+  # MongoDB for telemetry and events
+  mongodb:
+    image: mongo:7.0
+    container_name: vla_mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+    networks:
+      - vla-network
+    restart: unless-stopped
+
+  # Redis for caching and message queue
+  redis:
+    image: redis:7.2-alpine
+    container_name: vla_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - vla-network
+    restart: unless-stopped
+
+  # ============================================
+  # Monitoring Services
+  # ============================================
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: vla_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - vla-network
+    restart: unless-stopped
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: vla_grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+    volumes:
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+      - grafana-data:/var/lib/grafana
+    networks:
+      - vla-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # Node Exporter for system metrics
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: vla_node_exporter
+    ports:
+      - "9100:9100"
+    networks:
+      - vla-network
+    restart: unless-stopped
+
+  # ============================================
+  # MLOps Services
+  # ============================================
+
+  # MLflow Tracking Server
+  mlflow:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.mlflow
+    container_name: vla_mlflow
+    ports:
+      - "5000:5000"
+    environment:
+      - BACKEND_STORE_URI=postgresql://robot:robot_pass@postgres:5432/mlflow
+      - DEFAULT_ARTIFACT_ROOT=/mlflow/artifacts
+    volumes:
+      - mlflow-artifacts:/mlflow/artifacts
+    networks:
+      - vla-network
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  # ============================================
+  # UI Services
+  # ============================================
+
+  # Streamlit Dashboard
+  streamlit:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.streamlit
+    container_name: vla_streamlit
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+    volumes:
+      - ./ui/streamlit:/app
+    networks:
+      - vla-network
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # ============================================
+  # Worker Services
+  # ============================================
+
+  # Celery Worker for background tasks
+  celery-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: vla_celery_worker
+    command: celery -A api.tasks worker --loglevel=info
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - ./api:/app/api
+    networks:
+      - vla-network
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+networks:
+  vla-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  neo4j-data:
+  neo4j-logs:
+  mongodb-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+  mlflow-artifacts:
+  model-cache:

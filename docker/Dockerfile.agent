@@ -1,0 +1,33 @@
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3-pip \
+    python3-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir -r requirements.txt
+
+# Install LangChain and LLM dependencies
+RUN pip3 install --no-cache-dir \
+    langchain \
+    langchain-community \
+    langchain-openai \
+    openai \
+    anthropic \
+    chromadb \
+    faiss-cpu
+
+COPY cognition ./cognition
+COPY memory ./memory
+COPY config ./config
+
+CMD ["python3", "-m", "cognition.agent.main"]
