@@ -135,11 +135,13 @@ hnswlib==0.8.0
 networkx==3.2.1
 pyvis==0.3.2
 
-# Audio (for voice interface)
+# Audio (for voice interface - ENHANCED)
 sounddevice==0.4.6
 soundfile==0.12.1
-whisper==1.1.10
+openai-whisper==20231117  # Updated for better STT
 pyttsx3==2.90
+TTS==0.22.0  # Coqui TTS for advanced speech synthesis
+librosa==0.10.1  # For audio processing
 
 # NVIDIA Dependencies (optional, for GPU acceleration)
 # nvidia-cuda-runtime-cu12==12.1.105
@@ -157,3 +159,25 @@ rabbitmq==0.2.0
 
 # Caching
 aiocache==0.12.2
+
+# NEW: Advanced Features (100% Completion)
+# Mamba2 SSM Architecture
+mamba-ssm==1.1.1  # State Space Models for efficient sequence processing
+
+# 3D Gaussian Splatting
+torch-scatter==2.1.2  # For 3DGS operations
+plyfile==1.0.2  # Point cloud I/O
+open3d==0.18.0  # 3D visualization and processing
+
+# Multi-Robot Coordination
+redis-om==0.2.1  # Redis Object Mapping for fleet coordination
+asyncio-mqtt==0.16.2  # Async MQTT for robot communication
+
+# Security (Production-Grade)
+cryptography==41.0.7  # For mTLS and encryption
+python-jose==3.3.0  # JWT tokens
+bcrypt==4.1.2  # Password hashing
+
+# Sim-to-Real Transfer
+gym-robotics==1.2.3  # Robotics environments
+pybullet==3.2.6  # Physics simulation for validation
