@@ -1,0 +1,190 @@
+{
+  "dashboard": {
+    "title": "VLA Robot Assistant - Main Dashboard",
+    "tags": ["robot", "vla", "metrics"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 0,
+    "refresh": "5s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "API Request Rate",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(http_requests_total[5m])",
+            "legendFormat": "{{method}} {{path}}"
+          }
+        ],
+        "yaxes": [
+          {"label": "Requests/sec", "format": "short"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Task Success Rate",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "sum(rate(robot_tasks_completed_total[5m])) / sum(rate(robot_tasks_total[5m]))",
+            "legendFormat": "Success Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "red"},
+                {"value": 0.7, "color": "yellow"},
+                {"value": 0.9, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Robot Battery Level",
+        "type": "gauge",
+        "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "robot_battery_level",
+            "legendFormat": "Battery %"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "red"},
+                {"value": 20, "color": "yellow"},
+                {"value": 50, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "LLM Response Time",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(llm_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95"
+          },
+          {
+            "expr": "histogram_quantile(0.50, rate(llm_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "p50"
+          }
+        ],
+        "yaxes": [
+          {"label": "Seconds", "format": "s"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Navigation Success",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(navigation_success_total[5m]))",
+            "legendFormat": "Success"
+          },
+          {
+            "expr": "sum(rate(navigation_failure_total[5m]))",
+            "legendFormat": "Failure"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "System Resource Usage",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+            "legendFormat": "CPU %"
+          },
+          {
+            "expr": "(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100",
+            "legendFormat": "Memory %"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Perception FPS",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 16, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "rate(perception_frames_processed_total[1m])",
+            "legendFormat": "FPS"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "decimals": 1
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Active Tasks",
+        "type": "stat",
+        "gridPos": {"x": 18, "y": 16, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "robot_active_tasks",
+            "legendFormat": "Tasks"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "GraphRAG Query Performance",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(graphrag_query_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95"
+          }
+        ],
+        "yaxes": [
+          {"label": "Seconds", "format": "s"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Grasping Success Rate",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 24, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(manipulation_grasp_success_total[5m])) / sum(rate(manipulation_grasp_attempts_total[5m]))",
+            "legendFormat": "Success Rate"
+          }
+        ]
+      }
+    ]
+  }
+}
