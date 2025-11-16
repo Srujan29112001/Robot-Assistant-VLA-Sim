@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 import logging
 from typing import Optional
 
-from api.routes import commands, state, mcp_server
+from api.routes import commands, state, mcp_server, voice, graphql_api_integrated
 from api.models.schemas import HealthCheck
 from api.utils.config import settings
 from api.utils.database import init_databases, close_databases
@@ -29,6 +29,14 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Vision-Language Robotic Assistant API...")
     await init_databases()
     logger.info("Databases initialized")
+
+    # Initialize voice services
+    try:
+        voice.initialize_voice_services()
+        logger.info("Voice services initialized")
+    except Exception as e:
+        logger.warning(f"Voice services initialization failed: {e}")
+
     yield
     # Shutdown
     logger.info("Shutting down API...")
@@ -62,6 +70,8 @@ Instrumentator().instrument(app).expose(app)
 app.include_router(commands.router, prefix="/api/v1", tags=["commands"])
 app.include_router(state.router, prefix="/api/v1", tags=["state"])
 app.include_router(mcp_server.router, prefix="/mcp", tags=["mcp"])
+app.include_router(voice.router, prefix="/api/v1", tags=["voice"])
+app.include_router(graphql_api_integrated.router, prefix="/graphql", tags=["graphql"])
 
 
 @app.get("/", response_model=dict)
