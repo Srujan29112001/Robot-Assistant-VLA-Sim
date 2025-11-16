@@ -9,8 +9,32 @@ from typing import List, Optional
 from datetime import datetime
 import asyncio
 import logging
+import httpx
+import os
+
+from api.utils.robot_state import robot_state, get_robot_status, get_detected_objects
 
 logger = logging.getLogger(__name__)
+
+# GraphRAG client (lazy loaded)
+_knowledge_graph = None
+
+
+async def get_knowledge_graph():
+    """Get or create GraphRAG knowledge graph client"""
+    global _knowledge_graph
+    if _knowledge_graph is None:
+        try:
+            from memory.graphrag.knowledge_graph import KnowledgeGraph
+            neo4j_uri = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
+            neo4j_user = os.getenv("NEO4J_USER", "neo4j")
+            neo4j_password = os.getenv("NEO4J_PASSWORD", "password")
+            _knowledge_graph = KnowledgeGraph(neo4j_uri, neo4j_user, neo4j_password)
+            logger.info("GraphRAG knowledge graph initialized")
+        except Exception as e:
+            logger.warning(f"Could not initialize GraphRAG: {e}")
+            _knowledge_graph = None
+    return _knowledge_graph
 
 
 @strawberry.type
@@ -82,40 +106,92 @@ class Query:
     @strawberry.field
     async def robot_status(self) -> RobotStatus:
         """Get current robot status"""
-        # TODO: Integrate with actual robot state
+        # Integrated with actual robot state
+        status = await get_robot_status()
+        pos = status["position"]
+
         return RobotStatus(
-            position=RobotPosition(x=1.0, y=2.0, z=0.0, theta=0.0),
-            battery_level=85.5,
-            is_moving=False,
-            current_task=None,
-            holding_object=None
+            position=RobotPosition(
+                x=pos["x"],
+                y=pos["y"],
+                z=pos["z"],
+                theta=pos["theta"]
+            ),
+            battery_level=status["battery_level"],
+            is_moving=status["is_moving"],
+            current_task=status["current_task"],
+            holding_object=status["holding_object"]
         )
 
     @strawberry.field
     async def detected_objects(self) -> List[ObjectInfo]:
         """Get currently detected objects"""
-        # TODO: Integrate with perception system
-        return [
-            ObjectInfo(
-                object_id="obj_001",
-                label="bottle",
-                confidence=0.95,
-                position=RobotPosition(x=2.0, y=1.0, z=0.5, theta=0.0)
-            )
-        ]
+        # Integrated with perception system
+        objects = await get_detected_objects()
+
+        result = []
+        for obj in objects:
+            pos = None
+            if obj.get("position"):
+                p = obj["position"]
+                pos = RobotPosition(
+                    x=p["x"],
+                    y=p["y"],
+                    z=p["z"],
+                    theta=p["theta"]
+                )
+
+            result.append(ObjectInfo(
+                object_id=obj["object_id"],
+                label=obj.get("label"),
+                confidence=obj["confidence"],
+                position=pos
+            ))
+
+        return result
 
     @strawberry.field
     async def query_memory(self, query: str, limit: int = 10) -> List[MemoryEntry]:
         """Query robot's long-term memory"""
-        # TODO: Integrate with GraphRAG
-        return [
-            MemoryEntry(
-                fact=f"Memory result for: {query}",
-                timestamp=datetime.now(),
-                confidence=0.8,
-                entities=["bottle", "table"]
-            )
-        ]
+        # Integrated with GraphRAG
+        kg = await get_knowledge_graph()
+
+        if kg is None:
+            # Fallback if GraphRAG not available
+            logger.warning("GraphRAG not available, returning empty results")
+            return []
+
+        try:
+            facts = await kg.query_graph(query, limit)
+
+            results = []
+            for fact in facts:
+                # Convert graph result to MemoryEntry
+                fact_text = f"{fact.get('entity', 'Unknown')} {fact.get('relation', '-')} {fact.get('target', 'Unknown')}"
+                if "location" in fact:
+                    fact_text = f"{fact['object']} is at {fact['location']}"
+
+                entities = [
+                    fact.get('entity', ''),
+                    fact.get('target', ''),
+                    fact.get('object', ''),
+                    fact.get('location', '')
+                ]
+                entities = [e for e in entities if e]  # Filter empty strings
+
+                results.append(MemoryEntry(
+                    fact=fact_text,
+                    timestamp=datetime.fromtimestamp(fact.get('timestamp', datetime.now().timestamp()) / 1000)
+                    if 'timestamp' in fact else datetime.now(),
+                    confidence=0.9,
+                    entities=entities
+                ))
+
+            return results
+
+        except Exception as e:
+            logger.error(f"GraphRAG query failed: {e}", exc_info=True)
+            return []
 
     @strawberry.field
     async def get_map_info(self) -> str:
@@ -145,16 +221,50 @@ class Mutation:
         """Navigate to a location"""
         logger.info(f"GraphQL: Navigate to {input.target_location}")
 
-        # TODO: Call actual navigation system
+        # Call actual navigation system via MCP
         task_id = f"nav_{int(datetime.now().timestamp())}"
 
-        return TaskResult(
-            task_id=task_id,
-            status="in_progress",
-            message=f"Navigating to {input.target_location}",
-            started_at=datetime.now(),
-            completed_at=None
-        )
+        try:
+            # Call MCP server for navigation
+            mcp_url = os.getenv("MCP_SERVER_URL", "http://localhost:8000/mcp")
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{mcp_url}/execute",
+                    json={
+                        "action": "NAVIGATE",
+                        "parameters": {"location": input.target_location},
+                        "context": {}
+                    }
+                )
+                response.raise_for_status()
+                result = response.json()
+
+            # Update robot state
+            await robot_state.set_moving(True)
+            await robot_state.set_current_task(f"Navigating to {input.target_location}")
+
+            status = "in_progress" if result.get("status") == "success" else "failed"
+            message = f"Navigating to {input.target_location}"
+            if status == "failed":
+                message = f"Navigation failed: {result.get('error', 'Unknown error')}"
+
+            return TaskResult(
+                task_id=task_id,
+                status=status,
+                message=message,
+                started_at=datetime.now(),
+                completed_at=None
+            )
+
+        except Exception as e:
+            logger.error(f"Navigation request failed: {e}", exc_info=True)
+            return TaskResult(
+                task_id=task_id,
+                status="failed",
+                message=f"Navigation error: {str(e)}",
+                started_at=datetime.now(),
+                completed_at=datetime.now()
+            )
 
     @strawberry.mutation
     async def manipulate(self, input: ManipulationInput) -> TaskResult:
@@ -178,15 +288,33 @@ class Mutation:
 
         task_id = f"cmd_{int(datetime.now().timestamp())}"
 
-        # TODO: Send to LangChain agent
+        # Integrated with LangChain agent via agent interface
+        try:
+            from api.mcp.agent_interface import execute_command_with_agent
 
-        return TaskResult(
-            task_id=task_id,
-            status="processing",
-            message=f"Processing command: {command}",
-            started_at=datetime.now(),
-            completed_at=None
-        )
+            # Execute command asynchronously (don't wait for completion)
+            asyncio.create_task(execute_command_with_agent(task_id, command, {}))
+
+            # Update robot state
+            await robot_state.set_current_task(command)
+
+            return TaskResult(
+                task_id=task_id,
+                status="processing",
+                message=f"Processing command: {command}",
+                started_at=datetime.now(),
+                completed_at=None
+            )
+
+        except Exception as e:
+            logger.error(f"Command execution failed: {e}", exc_info=True)
+            return TaskResult(
+                task_id=task_id,
+                status="failed",
+                message=f"Error: {str(e)}",
+                started_at=datetime.now(),
+                completed_at=datetime.now()
+            )
 
     @strawberry.mutation
     async def emergency_stop(self) -> str:

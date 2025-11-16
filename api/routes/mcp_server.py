@@ -9,6 +9,7 @@ import logging
 import time
 
 from api.models.schemas import MCPRequest, MCPResponse
+from api.utils.robot_state import robot_state, get_detected_objects
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -137,12 +138,24 @@ class MCPServer:
         """Get perception data"""
         logger.info("MCP: Fetching perception data")
 
-        # In production: query perception service
+        # Integrated with actual perception system via robot state
+        objects = await get_detected_objects()
+
+        # Convert to MCP format
+        mcp_objects = []
+        for obj in objects:
+            mcp_obj = {
+                "id": obj["object_id"],
+                "class": obj.get("label", "unknown"),
+                "confidence": obj["confidence"]
+            }
+            if obj.get("position"):
+                pos = obj["position"]
+                mcp_obj["position"] = [pos["x"], pos["y"], pos["z"]]
+            mcp_objects.append(mcp_obj)
+
         return {
-            "objects": [
-                {"id": "obj_001", "class": "bottle", "position": [1.5, 0.3, 0.8]},
-                {"id": "obj_002", "class": "table", "position": [2.0, 0.0, 0.5]}
-            ],
+            "objects": mcp_objects,
             "timestamp": time.time()
         }
 
@@ -186,17 +199,22 @@ class MCPServer:
 
     async def _get_map(self) -> Dict:
         """Get SLAM map"""
+        # Integrated with robot state for known locations
+        known_locations = robot_state.get_known_locations()
+
+        # Convert to MCP format
+        locations_dict = {}
+        for name, pos in known_locations.items():
+            locations_dict[name] = [pos["x"], pos["y"]]
+
         return {
-            "known_locations": {
-                "kitchen": [2.0, 3.0],
-                "living_room": [-1.0, 1.0],
-                "left_table": [2.5, 0.5]
-            }
+            "known_locations": locations_dict
         }
 
     async def _get_battery(self) -> Dict:
         """Get battery level"""
-        return {"battery_level": 85.5}
+        # Integrated with robot state
+        return {"battery_level": robot_state.battery_level}
 
     async def _scan_environment(self) -> Dict:
         """360-degree scan"""
