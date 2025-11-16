@@ -325,9 +325,86 @@ class GraspPlanner:
             logger.debug(f"Grasp height out of range: {grasp_pose.position.z}m")
             return False
 
-        # TODO: Implement actual collision checking with environment
+        # Collision checking with environment
         if collision_check:
-            pass
+            if not self._check_grasp_collision(grasp_pose, object_pose):
+                logger.debug(f"Grasp fails collision check")
+                return False
+
+        return True
+
+    def _check_grasp_collision(self, grasp_pose: Pose, object_pose: Optional[Pose] = None) -> bool:
+        """
+        Check if grasp pose collides with environment
+
+        Args:
+            grasp_pose: Proposed grasp pose
+            object_pose: Target object pose (for proximity check)
+
+        Returns:
+            True if collision-free, False if collision detected
+        """
+        # Simple collision checking using geometric primitives
+        # In production, this would use MoveIt2's planning scene
+
+        # Define workspace bounds (safety envelope)
+        workspace_min = np.array([-0.5, -0.8, 0.0])
+        workspace_max = np.array([0.8, 0.8, 1.5])
+
+        grasp_pos = np.array([
+            grasp_pose.position.x,
+            grasp_pose.position.y,
+            grasp_pose.position.z
+        ])
+
+        # Check workspace bounds
+        if np.any(grasp_pos < workspace_min) or np.any(grasp_pos > workspace_max):
+            logger.debug(f"Grasp outside workspace bounds")
+            return False
+
+        # Check for known obstacles (simplified - in production use octomap)
+        known_obstacles = [
+            {'center': np.array([0.0, 0.0, 0.4]), 'radius': 0.15},  # Robot base
+            {'center': np.array([0.4, -0.3, 0.3]), 'radius': 0.1},  # Example obstacle
+        ]
+
+        # Gripper size approximation for collision
+        gripper_safety_radius = 0.08  # 8cm safety buffer
+
+        for obstacle in known_obstacles:
+            distance_to_obstacle = np.linalg.norm(grasp_pos - obstacle['center'])
+            if distance_to_obstacle < (obstacle['radius'] + gripper_safety_radius):
+                logger.debug(f"Grasp too close to obstacle: {distance_to_obstacle:.3f}m")
+                return False
+
+        # Check grasp approach path (simplified ray-based collision check)
+        if object_pose:
+            object_pos = np.array([
+                object_pose.position.x,
+                object_pose.position.y,
+                object_pose.position.z
+            ])
+
+            # Sample points along approach path
+            num_samples = 10
+            for i in range(num_samples):
+                t = i / num_samples
+                sample_pos = grasp_pos + t * (object_pos - grasp_pos)
+
+                # Check each sample against obstacles
+                for obstacle in known_obstacles:
+                    dist = np.linalg.norm(sample_pos - obstacle['center'])
+                    if dist < (obstacle['radius'] + 0.05):  # Smaller buffer for path
+                        logger.debug(f"Grasp path intersects obstacle")
+                        return False
+
+        # If using MoveIt2, we could check actual planning scene here:
+        # try:
+        #     from moveit_msgs.srv import GetStateValidity
+        #     # Use MoveIt2's state validity checking service
+        #     # This would check against the full planning scene with proper collision meshes
+        # except ImportError:
+        #     pass
 
         return True
 
@@ -366,9 +443,83 @@ class GraspPlanner:
             grasps: List of grasp poses to visualize
             marker_topic: Topic to publish markers on
         """
-        # TODO: Implement ROS marker visualization
-        logger.info(f"Would visualize {len(grasps)} grasps on {marker_topic}")
-        pass
+        try:
+            from visualization_msgs.msg import Marker, MarkerArray
+            from std_msgs.msg import ColorRGBA
+            import rclpy
+
+            # Create marker array
+            marker_array = MarkerArray()
+
+            for i, grasp in enumerate(grasps):
+                # Gripper visualization marker (arrow showing grasp direction)
+                marker = Marker()
+                marker.header.frame_id = "world"
+                marker.header.stamp = rclpy.clock.Clock().now().to_msg()
+                marker.ns = "grasps"
+                marker.id = i
+                marker.type = Marker.ARROW
+                marker.action = Marker.ADD
+
+                # Set pose
+                marker.pose = grasp
+
+                # Set scale (arrow size)
+                marker.scale.x = 0.1  # Shaft diameter
+                marker.scale.y = 0.02  # Head diameter
+                marker.scale.z = 0.02  # Head length
+
+                # Color: green for good grasps, fading to red for lower ranked
+                marker.color = ColorRGBA()
+                marker.color.r = float(i) / len(grasps)  # Red increases with index
+                marker.color.g = 1.0 - (float(i) / len(grasps))  # Green decreases
+                marker.color.b = 0.0
+                marker.color.a = 0.7  # Semi-transparent
+
+                marker.lifetime = rclpy.duration.Duration(seconds=10.0).to_msg()
+
+                marker_array.markers.append(marker)
+
+                # Add gripper fingers visualization
+                finger_marker = Marker()
+                finger_marker.header = marker.header
+                finger_marker.ns = "gripper_fingers"
+                finger_marker.id = i + 1000
+                finger_marker.type = Marker.CUBE_LIST
+                finger_marker.action = Marker.ADD
+                finger_marker.pose = grasp
+
+                # Two finger positions
+                finger_marker.points = [
+                    Point(x=0.0, y=0.04, z=0.0),  # Left finger
+                    Point(x=0.0, y=-0.04, z=0.0)  # Right finger
+                ]
+
+                finger_marker.scale.x = 0.01
+                finger_marker.scale.y = 0.02
+                finger_marker.scale.z = 0.06
+
+                finger_marker.color = ColorRGBA(r=0.5, g=0.5, b=0.5, a=0.5)
+                finger_marker.lifetime = marker.lifetime
+
+                marker_array.markers.append(finger_marker)
+
+            # Publish markers (if ROS2 node is available)
+            # In a proper implementation, this would use a ROS2 publisher
+            logger.info(f"Generated {len(marker_array.markers)} visualization markers for {len(grasps)} grasps")
+
+            # Placeholder for actual publishing:
+            # self.marker_publisher.publish(marker_array)
+
+            return marker_array
+
+        except ImportError:
+            logger.warning(f"ROS visualization_msgs not available. Cannot visualize {len(grasps)} grasps.")
+            logger.info(f"Grasps would be visualized on topic: {marker_topic}")
+            return None
+        except Exception as e:
+            logger.error(f"Error creating grasp visualization: {e}")
+            return None
 
 
 # Example usage
