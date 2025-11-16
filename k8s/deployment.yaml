@@ -1,0 +1,487 @@
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vla-robot
+
+---
+# ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vla-config
+  namespace: vla-robot
+data:
+  ROS_DOMAIN_ID: "42"
+  LOG_LEVEL: "INFO"
+  MLFLOW_TRACKING_URI: "http://mlflow:5000"
+
+---
+# Secret (for API keys - populate via sealed-secrets or vault)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vla-secrets
+  namespace: vla-robot
+type: Opaque
+stringData:
+  OPENAI_API_KEY: "your_key_here"
+  ANTHROPIC_API_KEY: "your_key_here"
+  WANDB_API_KEY: "your_key_here"
+
+---
+# PostgreSQL Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: vla-robot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: pgvector/pgvector:pg16
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          value: "robot"
+        - name: POSTGRES_PASSWORD
+          value: "robot_pass"
+        - name: POSTGRES_DB
+          value: "robot_db"
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+
+---
+# PostgreSQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: vla-robot
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP
+
+---
+# Neo4j Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: neo4j
+  namespace: vla-robot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: neo4j
+  template:
+    metadata:
+      labels:
+        app: neo4j
+    spec:
+      containers:
+      - name: neo4j
+        image: neo4j:5.14
+        ports:
+        - containerPort: 7474
+        - containerPort: 7687
+        env:
+        - name: NEO4J_AUTH
+          value: "neo4j/robotpassword"
+        volumeMounts:
+        - name: neo4j-data
+          mountPath: /data
+      volumes:
+      - name: neo4j-data
+        persistentVolumeClaim:
+          claimName: neo4j-pvc
+
+---
+# Neo4j Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: neo4j
+  namespace: vla-robot
+spec:
+  selector:
+    app: neo4j
+  ports:
+  - name: http
+    port: 7474
+    targetPort: 7474
+  - name: bolt
+    port: 7687
+    targetPort: 7687
+  type: ClusterIP
+
+---
+# Redis Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: vla-robot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7.2-alpine
+        ports:
+        - containerPort: 6379
+
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: vla-robot
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+  type: ClusterIP
+
+---
+# API Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: vla-robot
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+      - name: api
+        image: vla-robot/api:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: POSTGRES_HOST
+          value: "postgres"
+        - name: REDIS_HOST
+          value: "redis"
+        - name: NEO4J_URI
+          value: "bolt://neo4j:7687"
+        envFrom:
+        - configMapRef:
+            name: vla-config
+        - secretRef:
+            name: vla-secrets
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+            nvidia.com/gpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+            nvidia.com/gpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+
+---
+# API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: vla-robot
+spec:
+  selector:
+    app: api
+  ports:
+  - port: 8000
+    targetPort: 8000
+  type: LoadBalancer
+
+---
+# Perception Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: perception
+  namespace: vla-robot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: perception
+  template:
+    metadata:
+      labels:
+        app: perception
+    spec:
+      containers:
+      - name: perception
+        image: vla-robot/perception:latest
+        envFrom:
+        - configMapRef:
+            name: vla-config
+        resources:
+          requests:
+            nvidia.com/gpu: "1"
+          limits:
+            nvidia.com/gpu: "1"
+
+---
+# Agent Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+  namespace: vla-robot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent
+  template:
+    metadata:
+      labels:
+        app: agent
+    spec:
+      containers:
+      - name: agent
+        image: vla-robot/agent:latest
+        env:
+        - name: MCP_SERVER_URL
+          value: "http://api:8000/mcp"
+        envFrom:
+        - configMapRef:
+            name: vla-config
+        - secretRef:
+            name: vla-secrets
+        resources:
+          requests:
+            nvidia.com/gpu: "1"
+          limits:
+            nvidia.com/gpu: "1"
+
+---
+# Prometheus Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: vla-robot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.48.0
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus
+        - name: prometheus-storage
+          mountPath: /prometheus
+      volumes:
+      - name: prometheus-config
+        configMap:
+          name: prometheus-config
+      - name: prometheus-storage
+        persistentVolumeClaim:
+          claimName: prometheus-pvc
+
+---
+# Prometheus Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: vla-robot
+spec:
+  selector:
+    app: prometheus
+  ports:
+  - port: 9090
+    targetPort: 9090
+  type: ClusterIP
+
+---
+# Grafana Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: vla-robot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.2.2
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          value: "admin"
+        volumeMounts:
+        - name: grafana-storage
+          mountPath: /var/lib/grafana
+      volumes:
+      - name: grafana-storage
+        persistentVolumeClaim:
+          claimName: grafana-pvc
+
+---
+# Grafana Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: vla-robot
+spec:
+  selector:
+    app: grafana
+  ports:
+  - port: 3000
+    targetPort: 3000
+  type: LoadBalancer
+
+---
+# Persistent Volume Claims
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: vla-robot
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: neo4j-pvc
+  namespace: vla-robot
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-pvc
+  namespace: vla-robot
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-pvc
+  namespace: vla-robot
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# Horizontal Pod Autoscaler for API
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-hpa
+  namespace: vla-robot
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
