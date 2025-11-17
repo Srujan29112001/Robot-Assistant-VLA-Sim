@@ -408,7 +408,7 @@ if __name__ == "__main__":
             return "navigate_to kitchen"
 
     # Initialize planner
-    planner = SayCan Planner(
+    planner = SayCanPlanner(
         llm_model=MockLLM(),
         affordance_model=None,  # Will use default affordances
     )
