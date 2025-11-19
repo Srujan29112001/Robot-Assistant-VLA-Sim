@@ -1,15 +1,43 @@
-# Vision-Language Robotic Assistant (VLA-Sim)
+# 🤖 Vision-Language Robotic Assistant (VLA-Sim)
+
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![ROS2 Humble](https://img.shields.io/badge/ROS2-Humble-blue.svg)](https://docs.ros.org/en/humble/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Docker](https://img.shields.io/badge/docker-ready-brightgreen.svg)](https://www.docker.com/)
 
 A sophisticated embodied AI system combining vision-language models, robotic control, and autonomous planning for home service robotics.
+
+## 📑 Table of Contents
+
+- [Project Overview](#-project-overview)
+- [Architecture](#-architecture)
+- [Key Features](#-key-features)
+- [Installation](#-installation)
+- [Development Setup](#-development-setup)
+- [Usage](#-usage)
+- [Testing](#-testing)
+- [Monitoring](#-monitoring)
+- [Training Models](#-training-models)
+- [Project Structure](#-project-structure)
+- [Contributing](#-contributing)
+- [Resources](#-resources)
 
 ## 🎯 Project Overview
 
 This project implements a multi-modal AI agent that can:
-- **See** using Vision Transformers (ViT-DINO), depth estimation (MiDaS), and OCR
-- **Understand** natural language commands via Large Language Models
-- **Remember** using GraphRAG knowledge graphs and vector memory
-- **Act** through ROS2 navigation, manipulation, and learned RL policies
-- **Learn** from experience with reinforcement learning and continuous adaptation
+- 👁️ **See** using Vision Transformers (ViT-DINO), depth estimation (MiDaS), and OCR
+- 🧠 **Understand** natural language commands via Large Language Models
+- 💾 **Remember** using GraphRAG knowledge graphs and vector memory
+- 🤖 **Act** through ROS2 navigation, manipulation, and learned RL policies
+- 📈 **Learn** from experience with reinforcement learning and continuous adaptation
+
+### ⚡ Quick Facts
+
+- **100+ Microservices**: Fully containerized with Docker & Kubernetes support
+- **Production-Ready**: Includes monitoring (Prometheus/Grafana), MLOps (MLflow), and CI/CD
+- **Hardware & Simulation**: Works with real robots (TurtleBot3) and Gazebo simulation
+- **Advanced AI**: Integrates GPT-4, Claude, LLaMA, RT-2 VLA, and custom RL policies
+- **Enterprise Security**: JWT auth, mTLS, secrets management, and ROS2 security
 
 ## 🏗️ Architecture
 
@@ -86,60 +114,103 @@ This project implements a multi-modal AI agent that can:
 ## 📦 Installation
 
 ### Prerequisites
-- Docker & Docker Compose
-- NVIDIA GPU with CUDA 11.8+
-- 16GB+ RAM (32GB recommended)
-- Ubuntu 22.04 (recommended)
+- **Docker** 24.0+ & **Docker Compose** 2.20+
+- **NVIDIA GPU** with CUDA 11.8+ (optional but recommended)
+- **16GB+ RAM** (32GB recommended for production)
+- **Ubuntu 22.04** LTS (recommended)
 
-### Quick Start
+> 📘 **For detailed installation instructions, see [BUILD_RUN_DEPLOY_GUIDE.md](BUILD_RUN_DEPLOY_GUIDE.md)**
+
+### Quick Start (5 minutes)
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/yourusername/Robot-Assistant-VLA-Sim.git
+git clone https://github.com/Srujan29112001/Robot-Assistant-VLA-Sim.git
 cd Robot-Assistant-VLA-Sim
 ```
 
 2. **Set up environment variables**
 ```bash
 cp .env.example .env
-# Edit .env with your API keys and configuration
+nano .env  # Add your API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
 ```
+
+> ⚠️ **Important**: Update the following in `.env`:
+> - Add your API keys: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `HUGGINGFACE_TOKEN`
+> - Change default passwords: `POSTGRES_PASSWORD`, `NEO4J_PASSWORD`
+> - Generate secure JWT secret: `JWT_SECRET_KEY`
 
 3. **Build and launch with Docker Compose**
 ```bash
-docker-compose up --build
+# Start all core services (API, databases, monitoring, UI)
+docker-compose up --build -d
+
+# Wait for services to initialize (~30 seconds)
+docker-compose logs -f api
 ```
 
 4. **Access the interfaces**
-- Web Dashboard: http://localhost:8501
-- API Documentation: http://localhost:8000/docs
-- Grafana Monitoring: http://localhost:3000
-- Gazebo Simulation: localhost:11345
+- 🎨 **Web Dashboard**: http://localhost:8501
+- 📚 **API Documentation**: http://localhost:8000/docs
+- 📊 **Grafana Monitoring**: http://localhost:3000 (admin/admin)
+- 🔍 **GraphQL Playground**: http://localhost:8000/graphql
+- 🧪 **MLflow Tracking**: http://localhost:5000
+
+5. **Test the system**
+```bash
+# Check API health
+curl http://localhost:8000/health
+
+# Send a test command
+curl -X POST http://localhost:8000/command \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What can you do?"}'
+```
 
 ## 🛠️ Development Setup
 
-### Install Python dependencies
+### Local Python Development (Optional)
 ```bash
+# Create virtual environment
 python3 -m venv venv
 source venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Install package in editable mode
+pip install -e .
 ```
 
-### Build ROS2 workspace
+### Build ROS2 Workspace
 ```bash
 cd ros2_ws
 colcon build --symlink-install
 source install/setup.bash
 ```
 
-### Run simulation only
+### Deployment Profiles
+
+#### Run with Simulation (Gazebo)
 ```bash
-docker-compose --profile simulation up
+# Enable X11 forwarding for GUI
+export DISPLAY=:0
+xhost +local:docker
+
+# Start with simulation profile
+docker-compose --profile simulation up --build
 ```
 
-### Run with hardware
+#### Run with Hardware (Real Robot)
 ```bash
-docker-compose --profile hardware up
+# Start with hardware profile (includes ROS2 drivers)
+docker-compose --profile hardware up --build
+```
+
+#### Run Core Services Only (Development)
+```bash
+# Just API, databases, and UI (no ROS2/Gazebo)
+docker-compose up api postgres redis neo4j mongodb streamlit grafana
 ```
 
 ## 📚 Usage
@@ -174,15 +245,42 @@ curl http://localhost:8000/state
 
 ## 🧪 Testing
 
+### Run Tests in Docker (Recommended)
 ```bash
 # Run all tests
-pytest tests/
+docker-compose exec api pytest tests/ -v
 
-# Run specific test suite
-pytest tests/test_perception.py
+# Run specific test suites
+docker-compose exec api pytest tests/test_perception.py -v
+docker-compose exec api pytest tests/test_api.py -v
+docker-compose exec api pytest tests/test_integration.py -v
+
+# Run with coverage report
+docker-compose exec api pytest tests/ --cov=. --cov-report=html --cov-report=term
+
+# View coverage report
+open htmlcov/index.html
+```
+
+### Run Tests Locally
+```bash
+# In virtual environment
+source venv/bin/activate
+
+# Run all tests
+pytest tests/ -v
 
 # Run with coverage
 pytest --cov=. --cov-report=html
+```
+
+### Code Quality Checks
+```bash
+# Linting and formatting
+docker-compose exec api black . --check
+docker-compose exec api flake8 .
+docker-compose exec api isort . --check-only
+docker-compose exec api mypy .
 ```
 
 ## 📊 Monitoring
@@ -272,24 +370,29 @@ If you use this project in your research, please cite:
 
 ```bibtex
 @software{vla_robotic_assistant,
-  title={Vision-Language Robotic Assistant},
-  author={Your Name},
+  title={Vision-Language Robotic Assistant (VLA-Sim)},
+  author={Srujan Deshpande},
   year={2025},
-  url={https://github.com/yourusername/Robot-Assistant-VLA-Sim}
+  url={https://github.com/Srujan29112001/Robot-Assistant-VLA-Sim}
 }
 ```
 
 ## 🔗 Resources
 
-- [Documentation](docs/)
-- [API Reference](docs/api.md)
-- [Architecture Details](docs/architecture.md)
-- [Tutorials](docs/tutorials/)
+- 📘 [Complete Build & Deploy Guide](BUILD_RUN_DEPLOY_GUIDE.md)
+- 📚 [Documentation](docs/)
+- 🚀 [Deployment Guide](DEPLOYMENT.md)
+- 🤝 [Contributing Guidelines](CONTRIBUTING.md)
+- ⚙️ [Project Features](FEATURES_COMPLETE.md)
 
-## 📧 Contact
+## 📧 Support
 
-For questions or collaboration: your.email@example.com
+- **Issues**: [GitHub Issues](https://github.com/Srujan29112001/Robot-Assistant-VLA-Sim/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/Srujan29112001/Robot-Assistant-VLA-Sim/discussions)
+- **Documentation**: [docs/](docs/)
 
 ---
 
 **Built with ❤️ for embodied AI and robotics**
+
+*Star ⭐ this repository if you find it helpful!*
